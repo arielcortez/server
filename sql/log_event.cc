@@ -78,6 +78,17 @@ TYPELIB binlog_checksum_typelib=
   binlog_checksum_type_length
 };
 
+/*
+  Following admin commands acquire table locks and these locks are not detected
+  by parallel replication deadlock detection-and-handling mechanism. Hence
+  they must be marked as DDL so that they are not scheduled in parallel with
+  conflicting DMLs resulting in a deadlock.
+*/
+#define IS_ADMIN_CMD(THD) \
+  ((thd_sql_command(THD) == SQLCOM_OPTIMIZE || \
+    thd_sql_command(THD) == SQLCOM_REPAIR   || \
+    thd_sql_command(THD) == SQLCOM_ANALYZE) ?  \
+    true : false)
 
 
 #define log_cs	&my_charset_latin1
@@ -7556,13 +7567,15 @@ Gtid_log_event::Gtid_log_event(THD *thd_arg, uint64 seq_no_arg,
 {
   cache_type= Log_event::EVENT_NO_CACHE;
   bool is_tmp_table= thd_arg->lex->stmt_accessed_temp_table();
+  bool is_admin_command= IS_ADMIN_CMD(thd_arg);
   if (thd_arg->transaction.stmt.trans_did_wait() ||
       thd_arg->transaction.all.trans_did_wait())
     flags2|= FL_WAITED;
   if (thd_arg->transaction.stmt.trans_did_ddl() ||
       thd_arg->transaction.stmt.has_created_dropped_temp_table() ||
       thd_arg->transaction.all.trans_did_ddl() ||
-      thd_arg->transaction.all.has_created_dropped_temp_table())
+      thd_arg->transaction.all.has_created_dropped_temp_table() ||
+      is_admin_command)
     flags2|= FL_DDL;
   else if (is_transactional && !is_tmp_table)
     flags2|= FL_TRANSACTIONAL;

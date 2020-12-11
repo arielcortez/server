@@ -1,0 +1,49 @@
+include/master-slave.inc
+[connection master]
+RESET MASTER;
+connection slave;
+include/stop_slave.inc
+SET @save_slave_parallel_threads= @@GLOBAL.slave_parallel_threads;
+SET @save_slave_parallel_mode= @@GLOBAL.slave_parallel_mode;
+SET GLOBAL slave_parallel_threads=2;
+SET GLOBAL slave_parallel_mode=optimistic;
+include/start_slave.inc
+connection master;
+CREATE TABLE t1(a INT) ENGINE=INNODB;
+OPTIMIZE TABLE t1;
+Table	Op	Msg_type	Msg_text
+test.t1	optimize	note	Table does not support optimize, doing recreate + analyze instead
+test.t1	optimize	status	OK
+INSERT INTO t1 VALUES(1);
+INSERT INTO t1  SELECT 1+a FROM t1;
+INSERT INTO t1  SELECT 2+a FROM t1;
+connection slave;
+#
+# Verify that following admin commands are marked as ddl
+# 'OPTIMIZE TABLE', 'REPAIR TABLE' and 'ANALYZE TABLE'
+#
+connection master;
+FLUSH LOGS;
+OPTIMIZE TABLE t1;
+Table	Op	Msg_type	Msg_text
+test.t1	optimize	note	Table does not support optimize, doing recreate + analyze instead
+test.t1	optimize	status	OK
+REPAIR TABLE t1;
+Table	Op	Msg_type	Msg_text
+test.t1	repair	note	The storage engine for the table doesn't support repair
+ANALYZE TABLE t1;
+Table	Op	Msg_type	Msg_text
+test.t1	analyze	status	OK
+FOUND 1 /GTID 0-1-6 ddl/ in mysqlbinlog.out
+FOUND 1 /GTID 0-1-7 ddl/ in mysqlbinlog.out
+FOUND 1 /GTID 0-1-8 ddl/ in mysqlbinlog.out
+#
+# Clean up
+#
+DROP TABLE t1;
+connection slave;
+include/stop_slave.inc
+SET GLOBAL slave_parallel_threads= @save_slave_parallel_threads;
+SET GLOBAL slave_parallel_mode= @save_slave_parallel_mode;
+include/start_slave.inc
+include/rpl_end.inc

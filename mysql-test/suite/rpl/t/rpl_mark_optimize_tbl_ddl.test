@@ -1,0 +1,86 @@
+# ==== Purpose ====
+#
+# Test verifies that there is no deadlock or assertion in
+# slave_parallel_mode=optimistic configuration while applying admin command
+# like 'OPTIMIZE TABLE', 'REPAIR TABLE' and 'ANALYZE TABLE'.
+#
+# ==== Implementation ====
+#
+# Steps:
+#    0 - Create a table, execute OPTIMIZE TABLE command on the table followed
+#        by some DMLS.
+#    1 - No assert should happen on slave server.
+#    2 - Assert that 'OPTIMIZE TABLE', 'REPAIR TABLE' and 'ANALYZE TABLE' are
+#        marked as 'DDL' in the binary log.
+#
+# ==== References ====
+#
+# MDEV-17515: GTID Replication in optimistic mode deadlock
+#
+
+--source include/have_binlog_format_row.inc
+--source include/have_innodb.inc
+--source include/master-slave.inc
+
+RESET MASTER;
+--let $MYSQLD_DATADIR= `select @@datadir`
+
+--connection slave
+--source include/stop_slave.inc
+SET @save_slave_parallel_threads= @@GLOBAL.slave_parallel_threads;
+SET @save_slave_parallel_mode= @@GLOBAL.slave_parallel_mode;
+SET GLOBAL slave_parallel_threads=2;
+SET GLOBAL slave_parallel_mode=optimistic;
+--source include/start_slave.inc
+
+--connection master
+CREATE TABLE t1(a INT) ENGINE=INNODB;
+OPTIMIZE TABLE t1;
+INSERT INTO t1 VALUES(1);
+INSERT INTO t1  SELECT 1+a FROM t1;
+INSERT INTO t1  SELECT 2+a FROM t1;
+--sync_slave_with_master
+
+--echo #
+--echo # Verify that following admin commands are marked as ddl
+--echo # 'OPTIMIZE TABLE', 'REPAIR TABLE' and 'ANALYZE TABLE'
+--echo #
+--connection master
+FLUSH LOGS;
+
+OPTIMIZE TABLE t1;
+--let optimize_gtid= `SELECT @@GLOBAL.gtid_binlog_pos`
+
+REPAIR TABLE t1;
+--let repair_gtid= `SELECT @@GLOBAL.gtid_binlog_pos`
+
+ANALYZE TABLE t1;
+--let analyze_gtid= `SELECT @@GLOBAL.gtid_binlog_pos`
+
+--exec $MYSQL_BINLOG $MYSQLD_DATADIR/master-bin.000002 > $MYSQLTEST_VARDIR/tmp/mysqlbinlog.out
+
+--let SEARCH_PATTERN= GTID $optimize_gtid ddl
+--let SEARCH_FILE= $MYSQLTEST_VARDIR/tmp/mysqlbinlog.out
+--source include/search_pattern_in_file.inc
+
+--let SEARCH_PATTERN= GTID $repair_gtid ddl
+--let SEARCH_FILE= $MYSQLTEST_VARDIR/tmp/mysqlbinlog.out
+--source include/search_pattern_in_file.inc
+
+--let SEARCH_PATTERN= GTID $analyze_gtid ddl
+--let SEARCH_FILE= $MYSQLTEST_VARDIR/tmp/mysqlbinlog.out
+--source include/search_pattern_in_file.inc
+
+--echo #
+--echo # Clean up
+--echo #
+DROP TABLE t1;
+--remove_file $MYSQLTEST_VARDIR/tmp/mysqlbinlog.out
+--sync_slave_with_master
+
+--source include/stop_slave.inc
+SET GLOBAL slave_parallel_threads= @save_slave_parallel_threads;
+SET GLOBAL slave_parallel_mode= @save_slave_parallel_mode;
+--source include/start_slave.inc
+
+--source include/rpl_end.inc
