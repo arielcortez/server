@@ -3604,8 +3604,18 @@ row_ins(
 	ut_ad(node->state == INS_NODE_INSERT_ENTRIES);
 
 	while (node->index != NULL) {
-		if (node->index->type != DICT_FTS) {
+		dict_index_t *index = node->index;
+		if (index->type != DICT_FTS && (
+			!node->vers_history_row()
+			|| !dict_index_is_unique(index)
+			|| dict_index_get_n_unique(index) > 1)) {
 			dberr_t err = row_ins_index_entry_step(node, thr);
+
+			ut_ad(!node->vers_history_row()
+			      || strcmp(index->name, FTS_DOC_ID_INDEX_NAME)
+			      || (dict_index_is_unique(index)
+				  && dict_index_get_n_unique(index) == 1));
+
 
 			if (err != DB_SUCCESS) {
 				DBUG_RETURN(err);
@@ -3765,4 +3775,12 @@ error_handling:
 	}
 
 	return(thr);
+}
+
+bool ins_node_t::vers_history_row() const
+{
+	if (!table->versioned())
+		return false;
+	dfield_t* row_end = dtuple_get_nth_field(row, table->vers_end);
+	return row_end->vers_history_row();
 }
