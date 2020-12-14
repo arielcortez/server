@@ -2906,6 +2906,7 @@ bool Item_exists_subselect::exists2in_processor(void *opt_arg)
       first_select->order_list.elements ||
       join->having ||
       first_select->with_sum_func ||
+      first_select->have_window_funcs() ||
       !first_select->leaf_tables.elements||
       !join->conds ||
       with_recursive_reference)
@@ -3338,7 +3339,10 @@ bool Item_in_subselect::fix_fields(THD *thd_arg, Item **ref)
     if (unit->is_union())
       inner_cols= &(unit->types);
     else
+    {
       inner_cols= &(unit->first_select()->item_list);
+      with_window_func|= (unit->first_select()->have_window_funcs());
+    }
     if (outer_cols_num != inner_cols->elements)
     {
       my_error(ER_OPERAND_COLUMNS, MYF(0), outer_cols_num);
@@ -3363,6 +3367,11 @@ bool Item_in_subselect::fix_fields(THD *thd_arg, Item **ref)
   else
   if (Item_subselect::fix_fields(thd_arg, ref))
     goto err;
+  if (with_window_func)
+  {
+    my_error(ER_WRONG_PLACEMENT_OF_WINDOW_FUNCTION, MYF(0));
+    goto err;
+  }
   fixed= TRUE;
   thd->where= save_where;
   DBUG_RETURN(FALSE);
